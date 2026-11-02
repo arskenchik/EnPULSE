@@ -64,6 +64,8 @@ dependencies {
 
     // core
     implementation(libs.androidx.core.ktx)
+    implementation(libs.tensorflow.lite)
+    testImplementation(libs.junit)
 
     // wearable data layer
     implementation(libs.android.gms.wearable)

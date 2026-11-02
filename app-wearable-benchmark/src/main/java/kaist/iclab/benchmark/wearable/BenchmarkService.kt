@@ -9,7 +9,6 @@ import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import android.util.Log
 import kotlinx.coroutines.launch
 
@@ -36,6 +35,10 @@ class BenchmarkService : Service() {
         const val ACTION_RESUME = "kaist.iclab.benchmark.wearable.RESUME"
 
         const val EXTRA_DURATION_MINUTES = "extra_duration_minutes"
+        const val EXTRA_CONDITION = "extra_condition"
+        const val EXTRA_GATE_M1_OFF = "extra_gate_m1_off"
+        const val EXTRA_GATE_M2_OFF = "extra_gate_m2_off"
+        const val EXTRA_MIN_SOC = "extra_min_soc"
 
         var isRunning = false
             private set
@@ -104,11 +107,13 @@ class BenchmarkService : Service() {
     private lateinit var metricsCollector: MetricsCollector
     private lateinit var csvWriter: CsvWriter
     private lateinit var handler: Handler
-    private var wakeLock: PowerManager.WakeLock? = null
-
-    private var intervalMs: Long = 60_000L
+    private var intervalMs: Long = 30_000L
     private var targetDurationMs: Long = 0L
     private var pauseStartTimeMs: Long = 0L
+    private var condition: String = "B0"
+    private var gateM1Off: Boolean = false
+    private var gateM2Off: Boolean = false
+    private var minSoc: Int = 20
 
     private val tickRunnable = object : Runnable {
         override fun run() {
@@ -154,6 +159,11 @@ class BenchmarkService : Service() {
                 }
 
                 updateNotification(snapshot, elapsedMs)
+                if (snapshot.batteryLevel in 0..minSoc) {
+                    Log.i(TAG, "Auto-stop SoC reached: ${snapshot.batteryLevel}% <= $minSoc%")
+                    performStop()
+                    return
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error collecting metrics", e)
             }
@@ -211,18 +221,16 @@ class BenchmarkService : Service() {
             }
         }
 
-        intervalMs = intent?.getLongExtra(EXTRA_INTERVAL_MS, 60_000L) ?: 60_000L
-        val durationMins = intent?.getLongExtra(EXTRA_DURATION_MINUTES, 0L) ?: 0L
+        intervalMs = intent?.getLongExtra(EXTRA_INTERVAL_MS, 30_000L) ?: 30_000L
+        val durationMins = intent?.getLongExtra(EXTRA_DURATION_MINUTES, 255L) ?: 255L
         targetDurationMs = durationMins * 60_000L
-        val scenarioName = intent?.getStringExtra(EXTRA_SCENARIO_NAME) ?: "unnamed"
-
-        // Acquire partial wake lock with a 24-hour timeout safety net
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "EnPULSE-WatchBenchmark::MetricsLogger"
-        ).apply { acquire(24 * 60 * 60 * 1000L) }
-
+        condition = intent?.getStringExtra(EXTRA_CONDITION)?.uppercase() ?: "B0"
+        require(condition.matches(Regex("B[0-6]"))) { "Condition must be B0 through B6" }
+        gateM1Off = intent?.getBooleanExtra(EXTRA_GATE_M1_OFF, false) ?: false
+        gateM2Off = intent?.getBooleanExtra(EXTRA_GATE_M2_OFF, false) ?: false
+        minSoc = (intent?.getIntExtra(EXTRA_MIN_SOC, 20) ?: 20).coerceIn(1, 100)
+        val requestedName = intent?.getStringExtra(EXTRA_SCENARIO_NAME) ?: "battery"
+        val scenarioName = "${condition}_${requestedName}_m1off-${gateM1Off}_m2off-${gateM2Off}"
 
         // Use a coroutine to prevent main thread blocking for File IO
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -320,6 +328,11 @@ class BenchmarkService : Service() {
                     } MB"
                 )
                 appendLine("Interval:        ${intervalMs / 1000} seconds")
+                appendLine("Condition:       $condition")
+                appendLine("M1 Gating Off:   $gateM1Off")
+                appendLine("M2 Gating Off:   $gateM2Off")
+                appendLine("Min SoC:         $minSoc%")
+                appendLine("Wake Lock:       none")
             }
             csvWriter.writeSummary(summaryText)
         }
@@ -346,12 +359,6 @@ class BenchmarkService : Service() {
         handler.removeCallbacks(tickRunnable)
         csvWriter.close()
 
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (_: Exception) {
-        }
         Log.i(TAG, "Service stopped. Folder: $currentFolderPath")
         super.onDestroy()
     }

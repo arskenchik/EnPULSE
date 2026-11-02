@@ -71,11 +71,14 @@ class BenchmarkActivity : ComponentActivity() {
         requestNotificationPermission()
         setContent {
             WatchBenchmarkScreen(
-                onStart = { scenario, intervalSec, durationMin ->
+                onStart = { scenario, intervalSec, durationMin, condition, gateM1Off, gateM2Off ->
                     startBenchmark(
                         scenario,
                         intervalSec,
-                        durationMin
+                        durationMin,
+                        condition,
+                        gateM1Off,
+                        gateM2Off,
                     )
                 },
                 onStop = { stopBenchmark() },
@@ -99,7 +102,14 @@ class BenchmarkActivity : ComponentActivity() {
     }
 
 
-    private fun startBenchmark(scenarioName: String, intervalSeconds: Long, durationMinutes: Long) {
+    private fun startBenchmark(
+        scenarioName: String,
+        intervalSeconds: Long,
+        durationMinutes: Long,
+        condition: String,
+        gateM1Off: Boolean,
+        gateM2Off: Boolean,
+    ) {
         if (scenarioName.isBlank()) {
             Toast.makeText(this, "Enter scenario name", Toast.LENGTH_SHORT).show()
             return
@@ -109,6 +119,10 @@ class BenchmarkActivity : ComponentActivity() {
             putExtra(BenchmarkService.EXTRA_INTERVAL_MS, intervalSeconds * 1000L)
             putExtra(BenchmarkService.EXTRA_SCENARIO_NAME, scenarioName)
             putExtra(BenchmarkService.EXTRA_DURATION_MINUTES, durationMinutes)
+            putExtra(BenchmarkService.EXTRA_CONDITION, condition)
+            putExtra(BenchmarkService.EXTRA_GATE_M1_OFF, gateM1Off)
+            putExtra(BenchmarkService.EXTRA_GATE_M2_OFF, gateM2Off)
+            putExtra(BenchmarkService.EXTRA_MIN_SOC, 20)
         }
         ContextCompat.startForegroundService(this, intent)
         Toast.makeText(this, "Started", Toast.LENGTH_SHORT).show()
@@ -133,13 +147,16 @@ class BenchmarkActivity : ComponentActivity() {
 
 @Composable
 fun WatchBenchmarkScreen(
-    onStart: (String, Long, Long) -> Unit,
+    onStart: (String, Long, Long, String, Boolean, Boolean) -> Unit,
     onStop: () -> Unit,
     onPause: () -> Unit,
 ) {
     var scenarioName by remember { mutableStateOf("") }
-    var intervalText by remember { mutableStateOf("60") }
-    var durationText by remember { mutableStateOf("0") }
+    var intervalText by remember { mutableStateOf("30") }
+    var durationText by remember { mutableStateOf("255") }
+    var conditionIndex by remember { mutableStateOf(0) }
+    var gateM1Off by remember { mutableStateOf(false) }
+    var gateM2Off by remember { mutableStateOf(false) }
     var isRunning by remember { mutableStateOf(BenchmarkService.isRunning) }
     var isPaused by remember { mutableStateOf(BenchmarkService.isPaused) }
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
@@ -248,6 +265,33 @@ fun WatchBenchmarkScreen(
                     }
                 )
 
+                Chip(
+                    onClick = { conditionIndex = (conditionIndex + 1) % 7 },
+                    colors = ChipDefaults.chipColors(backgroundColor = Color(0xFF37474F)),
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text("Condition: B$conditionIndex (tap to change)", color = Color.White)
+                    }
+                )
+
+                Chip(
+                    onClick = { gateM1Off = !gateM1Off },
+                    colors = ChipDefaults.chipColors(
+                        backgroundColor = if (gateM1Off) Color(0xFFB71C1C) else Color(0xFF1B5E20)
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("M1 gating off: $gateM1Off", color = Color.White) }
+                )
+
+                Chip(
+                    onClick = { gateM2Off = !gateM2Off },
+                    colors = ChipDefaults.chipColors(
+                        backgroundColor = if (gateM2Off) Color(0xFFB71C1C) else Color(0xFF1B5E20)
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("M2 gating off: $gateM2Off", color = Color.White) }
+                )
+
                 LabeledInput(
                     label = "Sampling Interval (seconds)",
                     value = intervalText,
@@ -283,7 +327,7 @@ fun WatchBenchmarkScreen(
                     onClick = {
                         val interval = intervalText.toLongOrNull() ?: 60L
                         val duration = durationText.toLongOrNull() ?: 0L
-                        onStart(scenarioName, interval, duration)
+                        onStart(scenarioName, interval, duration, "B$conditionIndex", gateM1Off, gateM2Off)
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF4CAF50)),
                     modifier = Modifier.size(ButtonDefaults.LargeButtonSize)
@@ -386,8 +430,11 @@ fun WatchBenchmarkScreen(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "• Scenario: Name prefix of output folders.\n" +
-                                    "• Interval: Metrics sampling interval in seconds.\n" +
-                                    "• Duration: Auto-stop duration in minutes (0 = infinite).\n" +
+                                    "• Condition: B0–B6; tap to cycle.\n" +
+                                    "• Gating: independently disable M1/M2 gating.\n" +
+                                    "• Interval: 30 s fuel gauge, PSS and thermal logging.\n" +
+                                    "• Duration: 255 min; auto-stops at 20% SoC.\n" +
+                                    "• No permanent wakelock is held.\n" +
                                     "• Tap Start (▶) to run. The logger runs in background.\n" +
                                     "• Tap Stop (■) to save outputs.\n" +
                                     "• Data saves to external files directory.",
