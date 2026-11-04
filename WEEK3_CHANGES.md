@@ -47,4 +47,8 @@ tracker model gates still requires the revised condition-to-runtime mapping.
 ```
 
 The app writes results under
-`/sdcard/Android/data/kaist.iclab.benchmark/files/ReplayResults/`.
+`/sdcard/Android/data/kaist.iclab.benchmark.week3/files/ReplayResults/`.
+
+The debug build uses application ID `kaist.iclab.benchmark.week3`, allowing it
+to be installed beside the original `kaist.iclab.benchmark` app without
+replacing that app or modifying its data.

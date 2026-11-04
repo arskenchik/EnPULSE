@@ -22,6 +22,9 @@ android {
     buildTypes {
         getByName("debug") {
             isMinifyEnabled = false
+            // Week 3 research build installs beside the lab benchmark app.
+            applicationIdSuffix = ".week3"
+            versionNameSuffix = "-week3"
         }
         release {
             isMinifyEnabled = true

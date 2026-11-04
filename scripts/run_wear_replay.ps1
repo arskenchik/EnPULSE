@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$package = "kaist.iclab.benchmark"
+$package = "kaist.iclab.benchmark.week3"
 $remoteDir = "/sdcard/Android/data/$package/files/Replay"
 $remoteFile = "$remoteDir/samosa_m1_test.bin"
 $remoteResults = "/sdcard/Android/data/$package/files/ReplayResults"
@@ -22,7 +22,7 @@ adb -s $Device push $ReplayFile $remoteFile
 if ($LASTEXITCODE -ne 0) { throw "Replay transfer failed" }
 
 adb -s $Device shell am start-foreground-service `
-    -n "$package/.wearable.ReplayService" `
+    -n "$package/kaist.iclab.benchmark.wearable.ReplayService" `
     -a "kaist.iclab.benchmark.wearable.REPLAY" `
     --es mode $Mode
 if ($LASTEXITCODE -ne 0) { throw "Replay service failed to start" }
