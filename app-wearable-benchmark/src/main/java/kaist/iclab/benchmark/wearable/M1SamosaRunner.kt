@@ -14,23 +14,53 @@ data class ReplayPrediction(
     val latencyMs: Double,
 )
 
-/** Week 2 replacement baseline: complete (50,6) IMU model, not encoder + lab head. */
-class M1SamosaRunner(context: Context) : AutoCloseable {
-    companion object {
-        const val MODEL_ASSET = "m1_samosa_float32.tflite"
-        const val ROWS = 50
-        const val CHANNELS = 6
-        const val CLASSES = 19
+data class SamosaModelSpec(
+    val id: String,
+    val asset: String,
+    val rows: Int,
+    val mean: FloatArray,
+    val std: FloatArray,
+)
 
-        private val MEAN = floatArrayOf(
+object SamosaModels {
+    const val CHANNELS = 6
+    const val CLASSES = 19
+
+    val M1 = SamosaModelSpec(
+        "m1", "m1_samosa_float32.tflite", 50,
+        floatArrayOf(
             0.46870455f, -5.353934f, 2.738805f, -0.017200477f, -0.006386256f, -0.028795335f
-        )
-        private val STD = floatArrayOf(
+        ),
+        floatArrayOf(
             5.8399177f, 4.692777f, 5.29747f, 1.4522898f, 0.7890654f, 0.85983855f
-        )
-    }
+        ),
+    )
+    val M2 = SamosaModelSpec(
+        "m2", "m2_samosa_float32.tflite", 100,
+        M1.mean.copyOf(), M1.std.copyOf(),
+    )
+    val M3 = SamosaModelSpec(
+        "m3", "m3_samosa_float32.tflite", 20,
+        floatArrayOf(
+            0.46650633f, -5.3541913f, 2.7367618f, -0.018836468f, -0.007033491f, -0.028414898f
+        ),
+        floatArrayOf(
+            5.844831f, 4.701788f, 5.2644677f, 1.4518188f, 0.7907644f, 0.8600537f
+        ),
+    )
 
-    private val model = context.assets.open(MODEL_ASSET).use { input ->
+    fun require(id: String): SamosaModelSpec = when (id.lowercase()) {
+        "m1" -> M1
+        "m2" -> M2
+        "m3" -> M3
+        else -> error("model must be m1, m2, or m3")
+    }
+}
+
+/** Complete IMU replacement baseline runner, not encoder + lab head. */
+class M1SamosaRunner(context: Context, val spec: SamosaModelSpec = SamosaModels.M1) : AutoCloseable {
+
+    private val model = context.assets.open(spec.asset).use { input ->
         val raw = input.readBytes()
         ByteBuffer.allocateDirect(raw.size).order(ByteOrder.nativeOrder()).apply {
             put(raw)
@@ -41,15 +71,17 @@ class M1SamosaRunner(context: Context) : AutoCloseable {
         setNumThreads(2)
         setUseXNNPACK(true)
     })
-    private val input = Array(1) { Array(ROWS) { FloatArray(CHANNELS) } }
-    private val output = Array(1) { FloatArray(CLASSES) }
+    private val input = Array(1) { Array(spec.rows) { FloatArray(SamosaModels.CHANNELS) } }
+    private val output = Array(1) { FloatArray(SamosaModels.CLASSES) }
 
     fun run(raw: FloatArray): ReplayPrediction {
-        require(raw.size == ROWS * CHANNELS) { "Expected ${ROWS * CHANNELS} values" }
-        for (row in 0 until ROWS) {
-            for (channel in 0 until CHANNELS) {
-                val index = row * CHANNELS + channel
-                input[0][row][channel] = (raw[index] - MEAN[channel]) / STD[channel]
+        require(raw.size == spec.rows * SamosaModels.CHANNELS) {
+            "Expected ${spec.rows * SamosaModels.CHANNELS} values"
+        }
+        for (row in 0 until spec.rows) {
+            for (channel in 0 until SamosaModels.CHANNELS) {
+                val index = row * SamosaModels.CHANNELS + channel
+                input[0][row][channel] = (raw[index] - spec.mean[channel]) / spec.std[channel]
             }
         }
         val start = SystemClock.elapsedRealtimeNanos()
@@ -57,7 +89,7 @@ class M1SamosaRunner(context: Context) : AutoCloseable {
         val elapsed = SystemClock.elapsedRealtimeNanos() - start
         val logits = output[0]
         var predicted = 0
-        for (index in 1 until CLASSES) if (logits[index] > logits[predicted]) predicted = index
+        for (index in 1 until SamosaModels.CLASSES) if (logits[index] > logits[predicted]) predicted = index
         val max = logits[predicted]
         var denominator = 0.0
         for (logit in logits) denominator += exp((logit - max).toDouble())

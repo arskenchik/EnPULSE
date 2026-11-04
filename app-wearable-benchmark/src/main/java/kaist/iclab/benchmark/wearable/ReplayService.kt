@@ -16,11 +16,12 @@ class ReplayService : Service() {
         const val ACTION_REPLAY = "kaist.iclab.benchmark.wearable.REPLAY"
         const val EXTRA_MODE = "mode"
         const val EXTRA_INPUT = "input"
+        const val EXTRA_MODEL = "model"
         const val MODE_ACCURACY = "accuracy"
         const val MODE_LATENCY = "latency"
         private const val CHANNEL = "replay_evaluation"
         private const val NOTIFICATION = 9010
-        private const val TAG = "M1ReplayService"
+        private const val TAG = "SamosaReplayService"
     }
 
     @Volatile private var worker: Thread? = null
@@ -37,27 +38,28 @@ class ReplayService : Service() {
         if (worker?.isAlive == true) return START_NOT_STICKY
         val mode = intent?.getStringExtra(EXTRA_MODE)?.lowercase(Locale.US) ?: MODE_ACCURACY
         require(mode == MODE_ACCURACY || mode == MODE_LATENCY) { "mode must be accuracy or latency" }
-        val defaultInput = File(getExternalFilesDir("Replay"), "samosa_m1_test.bin")
+        val spec = SamosaModels.require(intent?.getStringExtra(EXTRA_MODEL) ?: "m1")
+        val defaultInput = File(getExternalFilesDir("Replay"), "samosa_${spec.id}_test.bin")
         val input = File(intent?.getStringExtra(EXTRA_INPUT) ?: defaultInput.absolutePath)
-        worker = Thread({ runReplay(input, mode) }, "m1-replay").apply { start() }
+        worker = Thread({ runReplay(input, mode, spec) }, "${spec.id}-replay").apply { start() }
         return START_NOT_STICKY
     }
 
-    private fun runReplay(input: File, mode: String) {
+    private fun runReplay(input: File, mode: String, spec: SamosaModelSpec) {
         try {
             require(input.isFile) { "Replay input does not exist: $input" }
             val outputDir = File(getExternalFilesDir("ReplayResults"),
-                "m1_${mode}_${System.currentTimeMillis()}").apply { mkdirs() }
+                "${spec.id}_${mode}_${System.currentTimeMillis()}").apply { mkdirs() }
             val csv = File(outputDir, "predictions.csv")
             var measured = 0
             var correct = 0
             var latencySum = 0.0
 
-            M1SamosaRunner(applicationContext).use { runner ->
+            M1SamosaRunner(applicationContext, spec).use { runner ->
                 ReplayBinaryReader(input).use { reader ->
-                    require(reader.header.rows == M1SamosaRunner.ROWS &&
-                        reader.header.channels == M1SamosaRunner.CHANNELS) {
-                        "M1 expects (50,6), file is (${reader.header.rows},${reader.header.channels})"
+                    require(reader.header.rows == spec.rows &&
+                        reader.header.channels == SamosaModels.CHANNELS) {
+                        "${spec.id.uppercase()} expects (${spec.rows},6), file is (${reader.header.rows},${reader.header.channels})"
                     }
                     csv.bufferedWriter().use { writer ->
                         writer.appendLine("window_id,true_label,predicted_class,max_logit,max_probability,latency_ms,run,phase")
@@ -93,7 +95,7 @@ class ReplayService : Service() {
             File(outputDir, "summary.txt").writeText(buildString {
                 appendLine("mode=$mode")
                 appendLine("input=${input.absolutePath}")
-                appendLine("model=${M1SamosaRunner.MODEL_ASSET}")
+                appendLine("model=${spec.asset}")
                 appendLine("threads=2")
                 appendLine("xnnpack=true")
                 appendLine("measured_windows=$measured")
@@ -133,7 +135,7 @@ class ReplayService : Service() {
 
     private fun notification(text: String): Notification =
         Notification.Builder(this, CHANNEL)
-            .setContentTitle("M1 SaMOSA replay")
+            .setContentTitle("SaMOSA replay")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
