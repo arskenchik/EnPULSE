@@ -114,6 +114,9 @@ class BenchmarkService : Service() {
     private var gateM1Off: Boolean = false
     private var gateM2Off: Boolean = false
     private var minSoc: Int = 20
+    private lateinit var workload: BatteryConditionWorkload
+    private var workloadSpec: BatteryConditionWorkload.Spec? = null
+    private var stopReason = "manual"
 
     private val tickRunnable = object : Runnable {
         override fun run() {
@@ -128,6 +131,7 @@ class BenchmarkService : Service() {
 
             val elapsedMs = now - startTimeMs - totalPausedMs
             if (targetDurationMs > 0 && elapsedMs >= targetDurationMs) {
+                stopReason = "duration"
                 Log.i(TAG, "Auto-stop duration reached: ${targetDurationMs / 60000} mins")
                 playAutoStopSound()
                 performStop()
@@ -160,6 +164,7 @@ class BenchmarkService : Service() {
 
                 updateNotification(snapshot, elapsedMs)
                 if (snapshot.batteryLevel in 0..minSoc) {
+                    stopReason = "minimum_soc"
                     Log.i(TAG, "Auto-stop SoC reached: ${snapshot.batteryLevel}% <= $minSoc%")
                     performStop()
                     return
@@ -186,6 +191,7 @@ class BenchmarkService : Service() {
         super.onCreate()
         metricsCollector = MetricsCollector(applicationContext)
         csvWriter = CsvWriter(applicationContext)
+        workload = BatteryConditionWorkload(applicationContext)
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
 
@@ -250,6 +256,8 @@ class BenchmarkService : Service() {
                 maxNativeHeapBytes = -1L
                 maxAppMemoryMb = -1f
                 isRunning = true
+                stopReason = "manual"
+                workloadSpec = workload.start(condition)
 
                 // Take an initial measurement immediately, then schedule recurring
                 handler.post(tickRunnable)
@@ -333,9 +341,15 @@ class BenchmarkService : Service() {
                 appendLine("M2 Gating Off:   $gateM2Off")
                 appendLine("Min SoC:         $minSoc%")
                 appendLine("Wake Lock:       none")
+                appendLine("Stop Reason:     $stopReason")
+                appendLine("Workload:        ${workloadSpec?.description ?: "unknown"}")
+                appendLine("IMU Events:      ${workload.imuEvents}")
+                appendLine("Audio Samples:   ${workload.audioSamples}")
+                appendLine("Model Workload:  ${workloadSpec?.model ?: "none"}")
             }
             csvWriter.writeSummary(summaryText)
         }
+        workload.stop()
         csvWriter.close()
 
         val finalFolder = currentFolderPath
@@ -357,6 +371,7 @@ class BenchmarkService : Service() {
     override fun onDestroy() {
         isRunning = false
         handler.removeCallbacks(tickRunnable)
+        if (::workload.isInitialized) workload.stop()
         csvWriter.close()
 
         Log.i(TAG, "Service stopped. Folder: $currentFolderPath")
