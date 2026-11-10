@@ -1,6 +1,7 @@
 package kaist.iclab.benchmark.wearable
 
 import android.app.Notification
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -31,6 +32,7 @@ class BenchmarkService : Service() {
         const val EXTRA_SCENARIO_NAME = "extra_scenario_name"
 
         const val ACTION_STOP = "kaist.iclab.benchmark.wearable.STOP"
+        const val ACTION_DURATION_STOP = "kaist.iclab.benchmark.wearable.DURATION_STOP"
         const val ACTION_PAUSE = "kaist.iclab.benchmark.wearable.PAUSE"
         const val ACTION_RESUME = "kaist.iclab.benchmark.wearable.RESUME"
 
@@ -117,6 +119,8 @@ class BenchmarkService : Service() {
     private lateinit var workload: BatteryConditionWorkload
     private var workloadSpec: BatteryConditionWorkload.Spec? = null
     private var stopReason = "manual"
+    private lateinit var alarmManager: AlarmManager
+    private lateinit var durationStopIntent: PendingIntent
 
     private val tickRunnable = object : Runnable {
         override fun run() {
@@ -192,6 +196,13 @@ class BenchmarkService : Service() {
         metricsCollector = MetricsCollector(applicationContext)
         csvWriter = CsvWriter(applicationContext)
         workload = BatteryConditionWorkload(applicationContext)
+        alarmManager = getSystemService(AlarmManager::class.java)
+        durationStopIntent = PendingIntent.getService(
+            this,
+            9003,
+            Intent(this, BenchmarkService::class.java).setAction(ACTION_DURATION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
 
@@ -202,6 +213,11 @@ class BenchmarkService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_DURATION_STOP -> {
+                stopReason = "duration"
+                performStop()
+                return START_NOT_STICKY
+            }
             ACTION_STOP -> {
                 performStop()
                 return START_NOT_STICKY
@@ -258,6 +274,7 @@ class BenchmarkService : Service() {
                 isRunning = true
                 stopReason = "manual"
                 workloadSpec = workload.start(condition)
+                scheduleDurationStop()
 
                 // Take an initial measurement immediately, then schedule recurring
                 handler.post(tickRunnable)
@@ -272,6 +289,26 @@ class BenchmarkService : Service() {
 
     private var isStopping = false
 
+    /** Uses the OS alarm scheduler so auto-stop still fires while Wear OS is idle. */
+    private fun scheduleDurationStop() {
+        if (targetDurationMs <= 0) return
+        val triggerAt = System.currentTimeMillis() + targetDurationMs
+        if (android.os.Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAt,
+                durationStopIntent,
+            )
+        } else {
+            Log.w(TAG, "Exact-alarm access unavailable; using allow-while-idle fallback")
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAt,
+                durationStopIntent,
+            )
+        }
+    }
+
     /**
      * Gracefully stops the benchmark recording, calculates the summary statistics,
      * writes the summary to the CSV folder, and initiates data transfer to the phone.
@@ -279,6 +316,7 @@ class BenchmarkService : Service() {
     private fun performStop() {
         if (isStopping) return
         isStopping = true
+        if (::alarmManager.isInitialized) alarmManager.cancel(durationStopIntent)
         isRunning = false
         handler.removeCallbacks(tickRunnable)
 

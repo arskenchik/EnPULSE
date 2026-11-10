@@ -7,6 +7,8 @@
 - B1 registers accelerometer and gyroscope at 50 Hz.
 - B5 continuously reads mono PCM audio at 16 kHz without storing raw audio.
 - Sessions default to 255 minutes and stop at 20% SoC.
+- Duration auto-stop uses an exact allow-while-idle system alarm, not a service
+  Handler, so Wear OS idle scheduling cannot extend the session.
 - Metrics include charge, current, voltage, PSS, thermal status and temperature.
 - No permanent wakelock is requested or held.
 - Sessions can be started through ADB with `scripts/run_battery_session.ps1`.
