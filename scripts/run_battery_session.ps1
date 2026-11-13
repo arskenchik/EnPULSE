@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory=$true)][ValidateSet('B0','B1','B2','B3','B4','B5','B6')][string]$Condition,
+    [Parameter(Mandatory=$true)][ValidateSet('B0','B1','B2','B2P','B3','B4','B5','B6')][string]$Condition,
   [int]$DurationMinutes=255, [int]$IntervalSeconds=30, [int]$MinimumSoc=20,
   [string]$Serial=''
 )

@@ -13,8 +13,9 @@ def load(folder):
         print(f'Warning: skipping {folder}; drain-rate calculation needs at least two samples')
         return None
     a,b=rows[0],rows[-1]; hours=(int(b['timestamp_ms'])-int(a['timestamp_ms']))/3_600_000
-    match=re.search(r'(B[0-6])', folder.name)
-    return {'folder':str(folder),'date':a['timestamp_iso'][:10],'condition':match.group(1) if match else '?','rate':(int(a['battery_charge_uah'])-int(b['battery_charge_uah']))/hours,'soc':a['battery_level_pct'],'start':a['battery_charge_uah'],'end':b['battery_charge_uah'],'temp':a['battery_temp_c'],'pss':mean(float(x['app_memory_mb']) for x in rows),'max_temp':max(float(x['cpu_temperature_c']) for x in rows)}
+    match=re.search(r'(B2P|B[0-6])', folder.name)
+    condition = "B2'" if match and match.group(1) == 'B2P' else (match.group(1) if match else '?')
+    return {'folder':str(folder),'date':a['timestamp_iso'][:10],'condition':condition,'rate':(int(a['battery_charge_uah'])-int(b['battery_charge_uah']))/hours,'soc':a['battery_level_pct'],'start':a['battery_charge_uah'],'end':b['battery_charge_uah'],'temp':a['battery_temp_c'],'pss':mean(float(x['app_memory_mb']) for x in rows),'max_temp':max(float(x['cpu_temperature_c']) for x in rows)}
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument('root',type=Path); p.add_argument('--out',type=Path,default=Path('battery_tables.md')); a=p.parse_args()

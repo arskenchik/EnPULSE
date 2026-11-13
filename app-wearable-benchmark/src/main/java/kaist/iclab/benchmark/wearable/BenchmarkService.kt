@@ -247,7 +247,7 @@ class BenchmarkService : Service() {
         val durationMins = intent?.getLongExtra(EXTRA_DURATION_MINUTES, 255L) ?: 255L
         targetDurationMs = durationMins * 60_000L
         condition = intent?.getStringExtra(EXTRA_CONDITION)?.uppercase() ?: "B0"
-        require(condition.matches(Regex("B[0-6]"))) { "Condition must be B0 through B6" }
+        require(condition.matches(Regex("B(?:[0-6]|2P)"))) { "Condition must be B0-B6 or B2P" }
         gateM1Off = intent?.getBooleanExtra(EXTRA_GATE_M1_OFF, false) ?: false
         gateM2Off = intent?.getBooleanExtra(EXTRA_GATE_M2_OFF, false) ?: false
         minSoc = (intent?.getIntExtra(EXTRA_MIN_SOC, 20) ?: 20).coerceIn(1, 100)
@@ -319,6 +319,8 @@ class BenchmarkService : Service() {
         if (::alarmManager.isInitialized) alarmManager.cancel(durationStopIntent)
         isRunning = false
         handler.removeCallbacks(tickRunnable)
+        workload.stop()
+        val workloadStats = workload.stats()
 
         // Write summary before closing
         if (startTimeMs > 0 && initialBatteryLevel != -1) {
@@ -381,13 +383,21 @@ class BenchmarkService : Service() {
                 appendLine("Wake Lock:       none")
                 appendLine("Stop Reason:     $stopReason")
                 appendLine("Workload:        ${workloadSpec?.description ?: "unknown"}")
-                appendLine("IMU Events:      ${workload.imuEvents}")
-                appendLine("Audio Samples:   ${workload.audioSamples}")
+                appendLine("IMU Events:      ${workloadStats.imuEvents}")
+                appendLine("Audio Samples:   ${workloadStats.audioSamples}")
                 appendLine("Model Workload:  ${workloadSpec?.model ?: "none"}")
+                appendLine("Model Load Ms:   ${String.format("%.3f", workloadStats.modelLoadMs)}")
+                appendLine("Model Inferences: ${workloadStats.inferences}")
+                appendLine("Dropped Windows: ${workloadStats.droppedWindows}")
+                appendLine("Mean Latency Ms: ${String.format("%.3f", workloadStats.meanLatencyMs)}")
+                appendLine("P95 Latency Ms:  ${String.format("%.3f", workloadStats.p95LatencyMs)}")
+                appendLine("Max Latency Ms:  ${String.format("%.3f", workloadStats.maxLatencyMs)}")
+                appendLine("First 5m P95 Ms: ${String.format("%.3f", workloadStats.first5P95LatencyMs)}")
+                appendLine("Last 5m P95 Ms:  ${String.format("%.3f", workloadStats.last5P95LatencyMs)}")
+                appendLine("P95 Drift Ms:    ${String.format("%.3f", workloadStats.p95DriftMs)}")
             }
             csvWriter.writeSummary(summaryText)
         }
-        workload.stop()
         csvWriter.close()
 
         val finalFolder = currentFolderPath
