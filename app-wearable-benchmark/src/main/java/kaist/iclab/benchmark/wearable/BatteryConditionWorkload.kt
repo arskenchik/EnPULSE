@@ -16,13 +16,16 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 /** Executes the real sensor and model workload for battery conditions B0-B6/B2P. */
 class BatteryConditionWorkload(private val context: Context) : SensorEventListener {
     data class Spec(val condition: String, val description: String, val imuHz: Int? = null,
         val microphoneHz: Int? = null, val model: String? = null,
         val windowSamples: Int? = null, val hopSamples: Int? = null)
-    data class Stats(val imuEvents: Long, val audioSamples: Long, val inferences: Long,
+    data class Stats(val imuEvents: Long, val imuSamples: Long, val audioSamples: Long, val inferences: Long,
         val droppedWindows: Long, val modelLoadMs: Double, val meanLatencyMs: Double,
         val maxLatencyMs: Double, val p95LatencyMs: Double, val first5P95LatencyMs: Double,
         val last5P95LatencyMs: Double, val p95DriftMs: Double)
@@ -49,6 +52,9 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
     private var audioRunner: YamnetBatteryRunner? = null
     private val imuWindow = ArrayDeque<FloatArray>()
     private val latestGyro = FloatArray(3)
+    private val latestAccel = FloatArray(3)
+    private var imuScheduler: ScheduledExecutorService? = null
+    private var imuSamples = 0L
     private var samplesSinceInference = 0
     private var imuEvents = 0L
     private var audioSamples = 0L
@@ -79,8 +85,10 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
             sensorThread.start()
             val handler = Handler(sensorThread.looper)
             listOf(Sensor.TYPE_ACCELEROMETER, Sensor.TYPE_GYROSCOPE).forEach { type ->
-                sensors.getDefaultSensor(type)?.let { sensors.registerListener(this, it, 1_000_000 / hz, handler) }
+                sensors.getDefaultSensor(type)?.let { sensors.registerListener(this, it, 1_000_000 / (hz * 2), handler) }
             }
+            imuScheduler = Executors.newSingleThreadScheduledExecutor()
+            imuScheduler?.scheduleAtFixedRate(::captureImuSample, 0, 1_000_000L / hz, TimeUnit.MICROSECONDS)
         }
         selected.microphoneHz?.let { startAudio(it, selected.condition == "B6") }
         return selected
@@ -122,12 +130,20 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
     override fun onSensorChanged(event: SensorEvent) {
         synchronized(this) { imuEvents++ }
         if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-            System.arraycopy(event.values, 0, latestGyro, 0, 3)
-            return
+            synchronized(this) { System.arraycopy(event.values, 0, latestGyro, 0, 3) }
+        } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            synchronized(this) { System.arraycopy(event.values, 0, latestAccel, 0, 3) }
         }
-        if (event.sensor.type != Sensor.TYPE_ACCELEROMETER || imuRunner == null) return
+    }
+
+    private fun captureImuSample() {
         val selected = spec ?: return
-        imuWindow.addLast(floatArrayOf(event.values[0], event.values[1], event.values[2], latestGyro[0], latestGyro[1], latestGyro[2]))
+        val sample = synchronized(this) {
+            imuSamples++
+            floatArrayOf(latestAccel[0], latestAccel[1], latestAccel[2], latestGyro[0], latestGyro[1], latestGyro[2])
+        }
+        if (imuRunner == null) return
+        imuWindow.addLast(sample)
         while (imuWindow.size > requireNotNull(selected.windowSamples)) imuWindow.removeFirst()
         if (imuWindow.size < selected.windowSamples) return
         samplesSinceInference++
@@ -161,13 +177,16 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
         val overallP95 = p95(latencyReservoir)
         val firstP95 = p95(first5Latencies)
         val lastP95 = p95(last5Latencies.map { it.second })
-        return Stats(imuEvents, audioSamples, inferenceCount, droppedWindows, modelLoadMs,
+        return Stats(imuEvents, imuSamples, audioSamples, inferenceCount, droppedWindows, modelLoadMs,
             if (inferenceCount == 0L) 0.0 else latencySumMs / inferenceCount, maxLatencyMs,
             overallP95, firstP95, lastP95, lastP95 - firstP95)
     }
 
     fun stop() {
         sensors.unregisterListener(this)
+        imuScheduler?.shutdownNow()
+        imuScheduler?.awaitTermination(2, TimeUnit.SECONDS)
+        imuScheduler = null
         if (sensorThread.isAlive) sensorThread.quitSafely()
         recording.set(false); recorder?.runCatching { stop() }; audioThread?.join(2_000); recorder?.release()
         imuRunner?.close(); audioRunner?.close()

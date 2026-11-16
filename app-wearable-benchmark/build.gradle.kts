@@ -17,11 +17,21 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
         versionName = "1.0.0"
+        ndk {
+            // The SM-L325N Wear OS image exposes armeabi-v7a only; excluding
+            // emulator/unused JNI libraries makes wireless ADB deployment smaller.
+            abiFilters += "armeabi-v7a"
+        }
     }
 
     buildTypes {
         getByName("debug") {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             // Week 3 research build installs beside the lab benchmark app.
             applicationIdSuffix = ".week3"
             versionNameSuffix = "-week3"

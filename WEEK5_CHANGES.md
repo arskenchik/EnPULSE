@@ -16,6 +16,16 @@ load time, inference count, dropped windows, mean/p95/max latency, and first-vs-
 last-five-minute p95 drift. B6 uses the same YAMNet model and tensor contract as
 the existing tracker-library VAD implementation.
 
+Because the SM-L325N delivered raw IMU callbacks below the requested 50 Hz, the
+runtime now requests sensors at twice the target rate and samples the latest
+real accelerometer/gyroscope state on a dedicated fixed-rate clock (50 Hz for
+B2/B2P/B3 and 10 Hz for B4). The summary records both raw events and protocol
+samples so the effective cadence is auditable.
+
+The research APK is resource-shrunk and built for the watch image's reported
+`armeabi-v7a` ABI. This reduces deployment size from 86.8 MB to 13.7 MB without
+changing the side-by-side application ID.
+
 `scripts/generate_yamnet_table_d.py` creates Table D directly from the raw B6
 session and an optional full B5 reference session.
 

@@ -384,6 +384,7 @@ class BenchmarkService : Service() {
                 appendLine("Stop Reason:     $stopReason")
                 appendLine("Workload:        ${workloadSpec?.description ?: "unknown"}")
                 appendLine("IMU Events:      ${workloadStats.imuEvents}")
+                appendLine("IMU Samples:     ${workloadStats.imuSamples}")
                 appendLine("Audio Samples:   ${workloadStats.audioSamples}")
                 appendLine("Model Workload:  ${workloadSpec?.model ?: "none"}")
                 appendLine("Model Load Ms:   ${String.format("%.3f", workloadStats.modelLoadMs)}")
