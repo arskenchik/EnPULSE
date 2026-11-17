@@ -16,9 +16,6 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 
 /** Executes the real sensor and model workload for battery conditions B0-B6/B2P. */
 class BatteryConditionWorkload(private val context: Context) : SensorEventListener {
@@ -53,8 +50,9 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
     private val imuWindow = ArrayDeque<FloatArray>()
     private val latestGyro = FloatArray(3)
     private val latestAccel = FloatArray(3)
-    private var imuScheduler: ScheduledExecutorService? = null
     private var imuSamples = 0L
+    private var targetImuPeriodNs = 0L
+    private var nextImuSampleNs = 0L
     private var samplesSinceInference = 0
     private var imuEvents = 0L
     private var audioSamples = 0L
@@ -82,13 +80,13 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
             modelLoadMs = (SystemClock.elapsedRealtimeNanos() - loadStart) / 1_000_000.0
         }
         selected.imuHz?.let { hz ->
+            targetImuPeriodNs = 1_000_000_000L / hz
             sensorThread.start()
             val handler = Handler(sensorThread.looper)
             listOf(Sensor.TYPE_ACCELEROMETER, Sensor.TYPE_GYROSCOPE).forEach { type ->
-                sensors.getDefaultSensor(type)?.let { sensors.registerListener(this, it, 1_000_000 / (hz * 2), handler) }
+                val sensor = sensors.getDefaultSensor(type, true) ?: sensors.getDefaultSensor(type)
+                sensor?.let { sensors.registerListener(this, it, 1_000_000 / (hz * 2), handler) }
             }
-            imuScheduler = Executors.newSingleThreadScheduledExecutor()
-            imuScheduler?.scheduleAtFixedRate(::captureImuSample, 0, 1_000_000L / hz, TimeUnit.MICROSECONDS)
         }
         selected.microphoneHz?.let { startAudio(it, selected.condition == "B6") }
         return selected
@@ -133,6 +131,11 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
             synchronized(this) { System.arraycopy(event.values, 0, latestGyro, 0, 3) }
         } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
             synchronized(this) { System.arraycopy(event.values, 0, latestAccel, 0, 3) }
+            if (nextImuSampleNs == 0L) nextImuSampleNs = event.timestamp
+            while (event.timestamp >= nextImuSampleNs) {
+                captureImuSample()
+                nextImuSampleNs += targetImuPeriodNs
+            }
         }
     }
 
@@ -184,9 +187,6 @@ class BatteryConditionWorkload(private val context: Context) : SensorEventListen
 
     fun stop() {
         sensors.unregisterListener(this)
-        imuScheduler?.shutdownNow()
-        imuScheduler?.awaitTermination(2, TimeUnit.SECONDS)
-        imuScheduler = null
         if (sensorThread.isAlive) sensorThread.quitSafely()
         recording.set(false); recorder?.runCatching { stop() }; audioThread?.join(2_000); recorder?.release()
         imuRunner?.close(); audioRunner?.close()

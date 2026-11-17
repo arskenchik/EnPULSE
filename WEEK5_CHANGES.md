@@ -17,9 +17,10 @@ last-five-minute p95 drift. B6 uses the same YAMNet model and tensor contract as
 the existing tracker-library VAD implementation.
 
 Because the SM-L325N delivered raw IMU callbacks below the requested 50 Hz, the
-runtime now requests sensors at twice the target rate and samples the latest
-real accelerometer/gyroscope state on a dedicated fixed-rate clock (50 Hz for
-B2/B2P/B3 and 10 Hz for B4). The summary records both raw events and protocol
+runtime requests wake-up sensors at twice the target rate and uses sensor
+timestamps to resample the latest real accelerometer/gyroscope state at 50 Hz
+for B2/B2P/B3 and 10 Hz for B4. This remains active while the screen sleeps
+without a permanent wakelock. The summary records both raw events and protocol
 samples so the effective cadence is auditable.
 
 The research APK is resource-shrunk and built for the watch image's reported
